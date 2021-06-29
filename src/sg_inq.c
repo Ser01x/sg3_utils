@@ -2117,6 +2117,458 @@ decode_power_condition(uint8_t * buff, int len, int do_hex)
            sg_get_unaligned_be16(buff + 16));
 }
 
+struct tparty_cmd_name {
+    uint8_t action;
+    const char *name;
+};
+
+static struct tparty_cmd_name tparty_cmd83_names[] = {
+    { 0x00, "EXTENDED COPY(LID1)" },
+    { 0x01, "EXTENDED COPY(LID4)" },
+    { 0x10, "POPULATE TOKEN" },
+    { 0x11, "WRITE USING TOKEN" },
+    { 0x1c, "COPY OPERATION ABORT" },
+};
+
+static struct tparty_cmd_name tparty_cmd84_names[] = {
+    { 0x00, "RECEIVE COPY STATUS(LID1)" },
+    { 0x01, "RECEIVE COPY DATA(LID1)" },
+    { 0x03, "RECEIVE COPY OPERATING PARAMETERS" },
+    { 0x04, "RECEIVE COPY FAILURE DETAILS(LID1)" },
+    { 0x05, "RECEIVE COPY STATUS(LID4)" },
+    { 0x06, "RECEIVE COPY DATA(LID4)" },
+    { 0x07, "RECEIVE ROD TOKEN INFORMATION" },
+    { 0x08, "REPORT ALL ROD TOKENS" },
+};
+
+/* Print name of 3party command. 3party commands list is taken from SPC-4 5.16.3 */
+static void
+decode_3party_copy_cmd(uint8_t code, uint8_t action)
+{
+    const char *name;
+    unsigned int i;
+
+    printf("      %02Xh/%02Xh - ", code, action);
+    if (code == 0x83) {
+        for (i = 0; i < SG_ARRAY_SIZE(tparty_cmd83_names); i++)
+            if (tparty_cmd83_names[i].action == action) {
+                name = tparty_cmd83_names[i].name;
+                break;
+            }
+        if (i < SG_ARRAY_SIZE(tparty_cmd83_names))
+            printf("%s\n", name);
+        else
+            goto notfound;
+    } else if (code == 0x84) {
+        for (i = 0; i < SG_ARRAY_SIZE(tparty_cmd84_names); i++)
+            if (tparty_cmd84_names[i].action == action) {
+                name = tparty_cmd84_names[i].name;
+                break;
+            }
+        if (i < SG_ARRAY_SIZE(tparty_cmd84_names))
+            printf("%s\n", name);
+        else
+            goto notfound;
+    } else
+        goto notfound;
+    return;
+
+notfound:
+    printf("not identified\n");
+}
+
+struct desc_type_name {
+    uint8_t type;
+    const char *name;
+};
+
+static struct desc_type_name segment_descs[] = {
+    { 0x00, "Copy from block device to stream device" },
+    { 0x01, "Copy from stream device to block device" },
+    { 0x02, "Copy from block device to block device" },
+    { 0x03, "Copy from stream device to stream device" },
+    { 0x04, "Copy inline data to stream device" },
+    { 0x05, "Copy embedded data to stream device" },
+    { 0x06, "Read from stream device and discard" },
+    { 0x07, "Verify CSCD" },
+    { 0x08, "Copy block device with offset to stream device" },
+    { 0x09, "Copy stream device to block device with offset" } ,
+    { 0x0a, "Copy block device with offset to block device with\n"
+            "        offset" },
+    { 0x0b, "Copy from block device to stream device and hold a\n"
+            "        copy of processed data for the application client" },
+    { 0x0c, "Copy from stream device to block device and hold a\n"
+            "        copy of processed data for the application client" },
+    { 0x0d, "Copy from block device to block device and hold a\n"
+            "        copy of processed data for the application client" },
+    { 0x0e, "Copy from stream device to stream device and\n"
+            "        hold a copy of processed data for the application\n"
+            "        client" },
+    { 0x0f, "Read from stream device and hold a copy of\n"
+            "        processed data for the application client" },
+};
+
+static struct desc_type_name cscd_descs[] = {
+    { 0xe0, "Fibre Channel N_Port_Name CSCD descriptor" },
+    { 0xe1, "Fibre Channel N_Port_ID CSCD descriptor" },
+    { 0xe2, "Fibre Channel N_Port_ID With N_Port_Name\n"
+            "        Checking CSCD descriptor" },
+    { 0xe3, "Parallel Interface T_L CSCD descriptor" },
+    { 0xe4, "Identification Descriptor CSCD descriptor" },
+    { 0xe5, "IPv4 CSCD descriptor" },
+    { 0xe6, "Alias CSCD descriptor" },
+    { 0xe7, "RDMA CSCD descriptor" },
+    { 0xe8, "IEEE 1394 EUI-64 CSCD descriptor" },
+    { 0xe9, "SAS Serial SCSI Protocol CSCD descriptor" },
+    { 0xea, "IPv6 CSCD descriptor" },
+    { 0xeb, "IP Copy Service CSCD descriptor" },
+    { 0xec, "Reserved for CSCD descriptors" },
+};
+
+static void
+decode_descriptor_type(uint8_t type)
+{
+    const char *name;
+    unsigned int i;
+
+    if (type <= 0xbf) {
+        printf("      Segment descriptor (%02Xh): ", type);
+        for (i = 0; i < SG_ARRAY_SIZE(segment_descs); i++)
+            if (segment_descs[i].type == type) {
+                name = segment_descs[i].name;
+                break;
+            }
+        if (i < SG_ARRAY_SIZE(segment_descs))
+            printf("%s\n", name);
+        else
+            printf("not identified\n");
+    } else if ((type >= 0xc0) && (type <= 0xdf)) {
+        printf("      Vendor specific descriptors (%02Xh)\n", type);
+    } else if ((type >= 0xe0) && (type <= 0xfe)) {
+        printf("      CSCD descriptor (%02Xh): ", type);
+        for (i = 0; i < SG_ARRAY_SIZE(cscd_descs); i++)
+            if (cscd_descs[i].type == type) {
+                name = cscd_descs[i].name;
+                break;
+            }
+        if (i < SG_ARRAY_SIZE(cscd_descs))
+            printf("%s\n", name);
+        else if (type <= 0xfd)
+            printf("Reserved for CSCD descriptors\n");
+        else
+            printf("ROD CSCD descriptor\n");
+    } else {
+        printf("      CSCD descriptor extension (%02Xh)\n", type);
+    }
+}
+
+static void
+decode_3party_copy_desc(uint8_t * buff, int len)
+{
+    const char leadin[] = "3party copy VPD page error";
+    int u, i, idx, d_len, l_len, a_len, p_len;
+    int off;
+    const uint8_t * dp;
+    const uint8_t * lp;
+    uint16_t d_type;
+    uint8_t code, action, rod_type;
+
+    for (idx = 1, off = -1;
+         (u = sg_vpd_dev_id_iter(buff, len, &off, -1, -1, -1)) == 0; //// Не првильно, нужно свою функцию делать
+         ++idx) {
+        dp = buff + off; /* descriptor pointer */
+        d_type = sg_get_unaligned_be16(&dp[0]); /* descriptor type */
+        d_len = sg_get_unaligned_be16(&dp[2]); /* descriptor length */
+        printf("  3party copy descriptor (%04Xh) number %d, "
+               "descriptor length: %d\n", d_type, idx, d_len);
+        if ((off + d_len + 4) > len) {
+            pr2serr("%s: 3party copy descriptor\n"
+                    "length longer then remaining response length=%d\n",
+                    leadin, len - off);
+            return;
+        }
+        if ((d_len % 4) != 0) {
+            pr2serr("%s: 3party copy descriptor\n"
+                    "length should be a multiple of four: length=%d\n",
+                    leadin, d_len);
+            return;
+        }
+
+        switch (d_type) {
+            case 0x0000:
+                if (d_len != 0x0020) {
+                    pr2serr("%s: descriptor length should be 0020h\n", leadin);
+                    return;
+                }
+                printf("    Block Device ROD Token Limits descriptor:\n");
+                printf("      Vendor specific:");
+                for (i = 0; i < 6; i++)
+                    printf(" %02Xh", dp[4 + i]);
+                printf("      MAXIMUM RANGE DESCRIPTORS: %d\n",
+                        sg_get_unaligned_be16(&dp[10]));
+                printf("      MAXIMUM INACTIVITY TIMEOUT: %d\n",
+                        sg_get_unaligned_be32(&dp[12]));
+                printf("      DEFAULT INACTIVITY TIMEOUT: %d\n",
+                        sg_get_unaligned_be32(&dp[16]));
+                printf("      MAXIMUM TOKEN TRANSFER SIZE: %" PRIu64 "\n",
+                        sg_get_unaligned_be64(&dp[20]));
+                printf("      OPTIMAL TRANSFER COUNT: %" PRIu64 "\n",
+                        sg_get_unaligned_be64(&dp[28]));
+                break;
+
+            case 0x0001:
+                l_len = dp[4]; /* commands supported list length */
+                if ((l_len + 1) > d_len) {
+                    pr2serr("%s: list length longer\n"
+                            "then descriptor length=%d\n", leadin, l_len);
+                    return;
+                }
+                printf("    Supported Commands descriptor:\n");
+                if (!l_len) {
+                    printf("      Not defined\n");
+                    break;
+                }
+                lp = &dp[5]; /* list pointer */
+                p_len = 0;
+                while ((p_len < l_len) && (lp < (dp + d_len + 4))) {
+                    code = lp[0];
+                    a_len = lp[1]; /* actions list length */
+                    if ((a_len + 2) > l_len) {
+                        pr2serr("%s: action list length longer\n"
+                                "then command supported list length=%d\n",
+                                leadin, a_len);
+                        return;
+                    }
+                    for (i = 0; i < a_len; i++) {
+                        action = lp[i + 2];
+                        decode_3party_copy_cmd(code, action);
+                    }
+                    lp += a_len + 2;
+                    p_len += a_len + 2;
+                }
+                break;
+
+            case 0x0004:
+                if (d_len != 0x001c) {
+                    pr2serr("%s: parameter data descriptor\n"
+                            "length should be 001Ch\n", leadin);
+                    return;
+                }
+                printf("    Parameter Data descriptor:\n");
+                printf("      MAXIMUM CSCD DESCRIPTOR COUNT: %d\n",
+                        sg_get_unaligned_be16(&dp[8]));
+                printf("      MAXIMUM SEGMENT DESCRIPTOR COUNT: %d\n",
+                        sg_get_unaligned_be16(&dp[10]));
+                printf("      MAXIMUM DESCRIPTOR LIST LENGTH: %d\n",
+                        sg_get_unaligned_be32(&dp[12]));
+                printf("      MAXIMUM INLINE DATA LENGTH: %d\n",
+                        sg_get_unaligned_be32(&dp[16]));
+                break;
+            case 0x0008:
+                l_len = dp[4]; /* supported descriptor list length */
+                if ((l_len + 1) > d_len) {
+                    pr2serr("%s: list length longer\n"
+                            "then descriptor length=%d\n", leadin, l_len);
+                    return;
+                }
+                printf("    Supported Descriptors descriptor:\n");
+                if (!l_len) {
+                    printf("      Not defined\n");
+                    break;
+                }
+                lp = &dp[5];
+                for (i = 0; i < l_len; i++)
+                    decode_descriptor_type(lp[i]);
+                break;
+            case 0x000c:
+                l_len = sg_get_unaligned_be16(&dp[4]);
+                if ((l_len + 2) > d_len) {
+                    pr2serr("%s: supported CSCD descriptor\n"
+                            "ID list length longer then descriptor length=%d",
+                            leadin, l_len);
+                    return;
+                }
+                if ((l_len % 2) != 0) {
+                    pr2serr("%s: supported CSCD Descriptor ID list\n"
+                            "length should be a multiple of two: length=%d\n",
+                            leadin, l_len);
+                    return;
+                }
+                printf("    Supported CSCD Descriptors descriptor:\n");
+                if (!l_len) {
+                    printf("      Not defined\n");
+                    break;
+                }
+                lp = &dp[6];
+                for (i = 0; i < l_len; i += 2)
+                    printf("      %04Xh\n", sg_get_unaligned_be16(&lp[i]));
+                break;
+            case 0x0106:
+                printf("    ROD Token Features descriptor:\n");
+                printf("      [RESERVED=%d] REMOTE_TOKENS=%d\n",
+                        (dp[4] >> 4) & 0x0f, dp[4] & 0x0f);
+                printf("      MINIMUM TOKEN LIFETIME: %d\n",
+                        sg_get_unaligned_be32(&dp[16]));
+                printf("      MAXIMUM TOKEN LIFETIME: %d\n",
+                        sg_get_unaligned_be32(&dp[20]));
+                printf("      MAXIMUM TOKEN INACTIVITY TIMEOUT: %d\n",
+                        sg_get_unaligned_be32(&dp[24]));
+                l_len = sg_get_unaligned_be16(&dp[46]);
+                if ((l_len + 44) > d_len) {
+                    pr2serr("%s: ROD descriptors length longer\n"
+                            "then descriptor length=%d\n", leadin, l_len);
+                    return;
+                }
+                printf("      ROD device type specific descriptors:\n");
+                if (!l_len) {
+                    printf("        Not defined\n");
+                    break;
+                }
+                lp = &dp[48];
+                p_len = 0;
+                while ((p_len < l_len) && (lp < (dp + d_len + 4))) {
+                    rod_type = lp[0];
+                    a_len = sg_get_unaligned_be16(&lp[2]);
+                    switch (rod_type) {
+                        case 0x00:
+                            printf("        Block ROD device type specific features descriptor:\n");
+                            if (a_len != 0x002c) {
+                                pr2serr("%s: ROD device type feature descriptor\n"
+                                        "length shoult be 002Ch\n", leadin);
+                                return;
+                            }
+                            printf("          OPTIMAL BLOCK ROD LENGTH GRANULARITY: %d\n",
+                                    sg_get_unaligned_be16(&lp[6]));
+                            printf("          MAXIMUM BYTES IN BLOCK ROD: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[8]));
+                            printf("          OPTIMAL BYTES IN BLOCK ROD TRANSFER: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[16]));
+                            printf("          OPTIMAL BYTES TO TOKEN PER SEGMENT: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[24]));
+                            printf("          OPTIMAL BYTES FROM TOKEN PER SEGMENT: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[32]));
+                            break;
+                        case 0x01:
+                            printf("        Stream ROD token device type features descriptor:\n");
+                            if (a_len != 0x002c) {
+                                pr2serr("%s: ROD device type feature descriptor\n"
+                                        "length shoult be 002Ch\n", leadin);
+                                return;
+                            }
+                            printf("          MAXIMUM BYTES IN STREAM ROD: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[8]));
+                            printf("          OPTIMAL BYTES IN STREAM ROD TRANSFER: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[16]));
+                            break;
+
+                        case 0x03:
+                            printf("        Copy manager ROD device type specific features descriptor:\n");
+                            if (a_len != 0x002c) {
+                                pr2serr("%s: ROD device type feature descriptor\n"
+                                        "length shoult be 002Ch\n", leadin);
+                                return;
+                            }
+                            printf("          MAXIMUM BYTES IN PROCESSOR ROD: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[8]));
+                            printf("          OPTIMAL BYTES IN PROCESSOR ROD TRANSFER: %" PRIu64 "\n",
+                                    sg_get_unaligned_be64(&lp[16]));
+                            break;
+                        default:
+                            pr2serr("<< bad ROD device type specific descriptor "
+                                    "type code %02Xh >>\n", rod_type);
+                            hex2stderr(lp, a_len, 0);
+                            break;
+                    }
+                    lp += a_len + 4;
+                    p_len += a_len + 4;
+                }
+                break;
+            case 0x0108:
+                l_len = sg_get_unaligned_be16(&dp[6]);
+                if ((l_len + 4) > d_len) {
+                    pr2serr("%s: ROD type descriptors length longer\n"
+                            "then descriptor length=%d\n", leadin, l_len);
+                    return;
+                }
+                printf("    Supported ROD Types descriptor:\n");
+                if (!l_len) {
+                    printf("      Not defined\n");
+                    break;
+                }
+                lp = &dp[8];
+                p_len = 0;
+                while ((p_len < l_len) && (lp < (dp + d_len + 4))) {
+                    printf("      ROD TYPE: %08Xh\n",
+                            sg_get_unaligned_be32(&lp[0]));
+                    printf("      ECPY_INT=%d TOKEN_IN=%d TOKEN_OUT=%d\n",
+                            (lp[4] >> 7) & 0x01, (lp[4] >> 1) & 0x01, lp[4] & 0x01);
+                    printf("      PREFERENCE INDICATOR: %04Xh\n",
+                            sg_get_unaligned_be16(&lp[6]));
+                    lp += 64;
+                    p_len += 64;
+                }
+                break;
+            case 0x8001:
+                if (d_len != 0x0020) {
+                    pr2serr("%s: descriptor length should be 0020h\n", leadin);
+                    return;
+                }
+                printf("    General Copy Operations descriptor:\n");
+                printf("      TOTAL CONCURRENT COPIES: %d\n",
+                        sg_get_unaligned_be32(&dp[4]));
+                printf("      MAXIMUM IDENTIFIED CONCURRENT COPIES: %d\n",
+                        sg_get_unaligned_be32(&dp[8]));
+                printf("      MAXIMUM SEGMENT LENGTH: %d\n",
+                        sg_get_unaligned_be16(&dp[12]));
+                printf("      DATA SEGMENT GRANULARITY (log 2): %d\n", dp[16]);
+                printf("      INLINE DATA GRANULARITY (log 2): %d\n", dp[17]);
+                break;
+            case 0x9101:
+                if (d_len != 0x000c) {
+                    pr2serr("%s: descriptor length should be 000Ch\n", leadin);
+                    return;
+                }
+                printf("    Stream Copy Operations descriptor:\n");
+                printf("      MAXIMUM STREAM DEVICE TRANSFER SIZE: %d\n",
+                        sg_get_unaligned_be32(&dp[4]));
+                break;
+            case 0xc001:
+                if (d_len != 0x001c) {
+                    pr2serr("%s: descriptor length should be 001Ch\n", leadin);
+                    return;
+                }
+                printf("    Held Data descriptor:\n");
+                printf("      HELD DATA LIMIT: %d\n",
+                        sg_get_unaligned_be32(&dp[4]));
+                printf("      HELD DATA GRANULARITY (log 2): %d\n", dp[8]);
+                break;
+            default:
+                pr2serr("<< bad Third-party copy descriptor type "
+                        "code %04Xh >>\n", d_type);
+                hex2stderr(dp, d_len, 0);
+                break;
+        }
+    }
+    if (-2 == u)
+        pr2serr("3party copy VPD page error: around offset=%d\n", off);
+}
+
+/* VPD_3PARTY_COPY [0x8f] */
+static void
+decode_3party_copy_vpd(uint8_t * buff, int len, int do_hex)
+{
+    if (do_hex) {
+        hex2stdout(buff, len, (1 == do_hex) ? 0 : -1);
+        return;
+    }
+    if (len < 4) {
+        pr2serr("Third-party Copy VPD page length too "
+                "short=%d\n", len);
+        return;
+    }
+    decode_3party_copy_desc(buff + 4, len - 4);
+}
+
 /* VPD_SCSI_FEATURE_SETS [0x92] (sfs) */
 static void
 decode_feature_sets_vpd(uint8_t * buff, int len,
@@ -3514,6 +3966,17 @@ vpd_decode(int sg_fd, const struct opts_t * op, int inhex_len)
             dStrRaw((const char *)rp, len);
         else
             decode_power_condition(rp, len, op->do_hex);
+        break;
+    case VPD_3PARTY_COPY:
+        if (!op->do_raw && (op->do_hex < 2))
+            printf("VPD INQUIRY: Third-party Copy page\n");
+        res = vpd_fetch_page_from_dev(sg_fd, rp, pn, mxlen, vb, &len);
+        if (res)
+            break;
+        if (op->do_raw)
+            dStrRaw((const char *)rp, len);
+        else
+            decode_3party_copy_vpd(rp, len, op->do_hex);
         break;
     case VPD_SCSI_FEATURE_SETS:         /* 0x92 */
         if (!op->do_raw && (op->do_hex < 2))
